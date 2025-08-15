@@ -160,9 +160,9 @@ def display_data_dimension_table(train_loader, val_loader, test_loader):
     table = PrettyTable()
     table.field_names = ["Loader", "Dataset Size", "Batch Size", "Batches per Epoch"]
     
-    table.add_row(["Train Loader", train_size, 32, len(train_loader)])
-    table.add_row(["Validation Loader", val_size, 32, len(val_loader)])
-    table.add_row(["Test Loader", test_size, 32, len(test_loader)])
+    table.add_row(["Train Loader", train_size, train_loader.batch_size, len(train_loader)])
+    table.add_row(["Validation Loader", val_size, val_loader.batch_size, len(val_loader)])
+    table.add_row(["Test Loader", test_size, test_loader.batch_size, len(test_loader)])
 
     print(table)
 
