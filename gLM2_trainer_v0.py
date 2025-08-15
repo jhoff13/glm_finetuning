@@ -144,7 +144,7 @@ def load_model(Rank, Dropout):
 
 # ------------------------- Load Dataset -------------------------------
 
-def dataset_loader(Path, Max_length=128):
+def dataset_generator(Path, Max_length=128):
     Dataset = GenomicDataset(
     fasta_path=Path,
     tokenizer=tokenizer,
@@ -167,7 +167,7 @@ def display_data_dimension_table(train_loader, val_loader, test_loader):
     print(table)
 
 def split_dataset(Dataset_Path, train_ratio, Batch_size):
-    dataset = dataset_loader(Dataset_Path)
+    dataset = dataset_generator(Dataset_Path)
     
     val_ratio = (1-train_ratio)/2
     test_ratio = val_ratio
