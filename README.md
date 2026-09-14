@@ -43,6 +43,92 @@ Successor to `gLM2_trainer_v0.py`. Same MLM objective, but:
 * length-grouped dynamic padding with a real `attention_mask`
 * step-based rather than epoch-based, with periodic checkpoints and eval
 
+### last_n is the mode that worked
+
+Freezing everything except the top N encoder layers beat LoRA, full finetuning
+and every other depth. On 3IP4 GatA–GatC (K=146 Cβ 8 Å contacts), slow
+categorical Jacobian, logits readout:
+
+| mode | trainable | P@C | vs base |
+|---|---|---|---|
+| frozen base | 0 | 0.130 | — |
+| `lora` (r=16) | 11.8M | 0.151 | +10% |
+| **`last_n --unfreeze_last 2`** | **40.7M** | **0.219** | **+68%** |
+| `last_n --unfreeze_last 8` | 162.6M | 0.158 | +21% |
+| `full` | 670.6M | 0.116 | −11% |
+
+Capacity past two layers is actively harmful — the full finetune lands *below*
+the frozen model, and intra-chain P@L degrades monotonically with depth
+(−1% at last-2, −38% at full).
+
+```bash
+python gLM2_trainer_v1.py -n my_run -i data/sets/my_msa -o runs/ft \
+    --mode last_n --unfreeze_last 2 \
+    -l 3e-5 -b 8 --grad_accum 2 --mask_prob 0.30 --max_steps 3000 \
+    --schedule constant --warmup 50 --save_every 400 --eval_every 200
+```
+
+### The data matters more than the method
+
+The same last-2 recipe, same hyperparameters, only the training records changed:
+
+| training data | P@C | vs base |
+|---|---|---|
+| species-paired A‖C MSA (879 rows) | 0.219 | +68% |
+| **pairing scrambled** (same rows, partners shuffled) | 0.068 | **−47%** |
+| MSA depth 1 (3 replicates) | 0.096–0.116 | −26% to −11% |
+| unpaired Pfam families | 0.068–0.103 | −47% to −21% |
+
+Scrambling holds depth and per-chain content byte-identical and varies only
+whether a row's two halves come from the same organism — and it is the worst arm
+of all. Held-out MLM loss cannot see this: the scrambled arm tracks the real
+paired MSA on loss while moving P@C the other way. **Score the quantity you care
+about; loss and perplexity will not tell you.**
+
+### Logged metrics (wandb)
+
+| metric | what |
+|---|---|
+| `train/mlm_loss`, `train/ppl` | running train loss and `exp(loss)` |
+| `val/mlm_loss`, `val/ppl` | held-out loss over masked positions and `exp(loss)` |
+| `train/grad_norm` | pre-clip gradient norm |
+| `target/pac_fast_logits_<pair>` | fast categorical-Jacobian interface precision |
+| `target/pl_fast_logits_<chain>` | fast intra-chain P@L |
+| `target/pseudo_ppl_<pair>` | **likelihood** pseudo-perplexity — *historical metric, name unchanged* |
+| `target/entropy_ppl_<pair>` | **entropy** perplexity — *the going-forward metric* |
+
+The `target/*` group needs `--track_pairs`. Runs sync to wandb unless `--offline`;
+metrics and config are uploaded, checkpoints are not.
+
+#### The two perplexities
+
+Both come from **one** set of stride-8 masked forward passes — same positions,
+same logits, two reductions — so logging both costs nothing extra:
+
+* `pseudo_ppl` = `exp(mean CE of the observed token)`: how well the model predicts
+  the residue that is actually there. A **likelihood**.
+* `entropy_ppl` = `2^mean(H)`, `H = -Σ p log₂ p`: how uncertain the model is,
+  regardless of the true residue. An **entropy**, matching `utils.get_perplexity`.
+
+They are not interchangeable, and the sign of the disagreement is not constant:
+
+| model | sequence | likelihood | entropy | gap | positions with CE>H |
+|---|---|---|---|---|---|
+| frozen base | 3IP4 A‖C | 2.849 | 2.858 | +0.3% | 23% |
+| frozen base | 2ONK A‖C | 3.934 | 4.473 | **+13.7%** | 27% |
+| frozen base | 2D1P B‖C | 1.465 | 1.394 | **−4.9%** | 8% |
+| last-2 finetune | 3IP4 A‖C | 1.012 | 1.067 | +5.4% | 0% |
+
+The gap lives entirely at positions where CE > H — the model is confidently
+*wrong* there, which costs likelihood and leaves entropy untouched. That is
+23–27 % of positions on the frozen base and 0 % after finetuning, which is why
+the two converge (per-position r 0.55 → 0.97) once the model is confident *and*
+right. The log base is irrelevant: `exp(H_nats)` and `2^(H_bits)` are identical.
+
+Neither predicts interface precision. Across nine pairs, confidence vs P@C gives
+r = −0.04 (p = 0.92) on the change over training — so use these to watch
+convergence, not to decide whether a run helped.
+
 ### Input format
 
 `-i` is a directory holding `train.fasta` / `val.fasta`, one record per line pair,
