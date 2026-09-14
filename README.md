@@ -49,15 +49,37 @@ Successor to `gLM2_trainer_v0.py`. Same MLM objective, but:
 where the sequence line is a literal gLM2 token string — strand tokens included,
 e.g. `<+>MAKQ...<+>MSTL...` for a concatenated pair.
 
-### Optional interface tracking
+### Interface tracking and scoring — `pac_eval.py` + `utils/`
 
 `--track_pairs A-C --pdb 3IP4` logs the *fast* categorical-Jacobian P@C and P@L
 of a target chain pair at every eval, so a run can be taken to saturation while
-watching the quantity of interest. This needs `pac_eval.py` (and its `utils`
-dependency) from the research repo plus biopython and a local PDB; without them
-the import is skipped and training runs normally. Treat the fast probe as a
-progress signal only — it has disagreed in sign with the slow categorical
-Jacobian, so rescore checkpoints properly before drawing conclusions.
+watching the quantity of interest. Treat the fast probe as a progress signal
+only — it has disagreed in **sign** with the slow categorical Jacobian, so
+rescore checkpoints properly before drawing conclusions.
+
+`pac_eval.py` is also the standalone scorer. It computes interface precision
+against the Cβ (Cα fallback for Gly) 8 Å inter-chain contact map of the
+deposited biological assembly, globally aligning the model sequence to the PDB
+chains and gap-padding both maps into a shared frame:
+
+```bash
+python pac_eval.py --pdb 3IP4 --pairs A-C --readout logits \
+    --ckpt runs/ft/my_run/step_03000.pt -o runs/scored --save_npz
+```
+
+Two conventions that matter: **`--readout logits`** reproduces the published
+numbers, `hidden` does not (they differ in absolute scale, so never mix them in
+one comparison); and the Cβ ground truth is what reproduces the published
+denominators — a Cα map gives a different K.
+
+`utils/` is vendored so `pac_eval.py` runs without the research repo.
+`utils.contacts` (the scoring helpers) works standalone. **`utils.model`
+does not** — `load_glm2`/`vanilla_attn` need the gLM2 modelling source, which
+is *not* included here; they raise a clear ImportError, and `import utils` still
+succeeds (check `utils.HAVE_GLM2_SRC`). Set `GLM2_MODELS_DIR` if you have it.
+
+Needs biopython and pandas in addition to the trainer's dependencies. PDB files
+download on demand to `$GLM2_PDB_DIR` (default `./pdb`).
 
 `--mode head_select` additionally needs the eager-attention model wrapper
 (`glm2_headselect_for_mlm.py`); point `GLM2_MODELS_DIR` at the directory holding
@@ -69,4 +91,6 @@ it.
 |---|---|
 | `GLM2_MODEL` | `tattabio/gLM2_650M` |
 | `GLM2_SEQS_CSV` | unset — only needed for `--track_pairs` |
-| `GLM2_MODELS_DIR` | `./models/gLM2` — only for `--mode head_select` |
+| `GLM2_MODELS_DIR` | `./models/gLM2` — for `--mode head_select` and `utils.model` |
+| `GLM2_REPO` | this directory — data root for `pac_eval.py` |
+| `GLM2_PDB_DIR` | `./pdb` — where PDB downloads land |
