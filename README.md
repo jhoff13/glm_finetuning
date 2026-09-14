@@ -43,48 +43,6 @@ Successor to `gLM2_trainer_v0.py`. Same MLM objective, but:
 * length-grouped dynamic padding with a real `attention_mask`
 * step-based rather than epoch-based, with periodic checkpoints and eval
 
-### last_n is the mode that worked
-
-Freezing everything except the top N encoder layers beat LoRA, full finetuning
-and every other depth. On 3IP4 GatA–GatC (K=146 Cβ 8 Å contacts), slow
-categorical Jacobian, logits readout:
-
-| mode | trainable | P@C | vs base |
-|---|---|---|---|
-| frozen base | 0 | 0.130 | — |
-| `lora` (r=16) | 11.8M | 0.151 | +10% |
-| **`last_n --unfreeze_last 2`** | **40.7M** | **0.219** | **+68%** |
-| `last_n --unfreeze_last 8` | 162.6M | 0.158 | +21% |
-| `full` | 670.6M | 0.116 | −11% |
-
-Capacity past two layers is actively harmful — the full finetune lands *below*
-the frozen model, and intra-chain P@L degrades monotonically with depth
-(−1% at last-2, −38% at full).
-
-```bash
-python gLM2_trainer_v1.py -n my_run -i data/sets/my_msa -o runs/ft \
-    --mode last_n --unfreeze_last 2 \
-    -l 3e-5 -b 8 --grad_accum 2 --mask_prob 0.30 --max_steps 3000 \
-    --schedule constant --warmup 50 --save_every 400 --eval_every 200
-```
-
-### The data matters more than the method
-
-The same last-2 recipe, same hyperparameters, only the training records changed:
-
-| training data | P@C | vs base |
-|---|---|---|
-| species-paired A‖C MSA (879 rows) | 0.219 | +68% |
-| **pairing scrambled** (same rows, partners shuffled) | 0.068 | **−47%** |
-| MSA depth 1 (3 replicates) | 0.096–0.116 | −26% to −11% |
-| unpaired Pfam families | 0.068–0.103 | −47% to −21% |
-
-Scrambling holds depth and per-chain content byte-identical and varies only
-whether a row's two halves come from the same organism — and it is the worst arm
-of all. Held-out MLM loss cannot see this: the scrambled arm tracks the real
-paired MSA on loss while moving P@C the other way. **Score the quantity you care
-about; loss and perplexity will not tell you.**
-
 ### Input format
 
 `-i` is a directory holding `train.fasta` / `val.fasta`, one record per line pair,
